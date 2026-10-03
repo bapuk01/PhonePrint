@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <style name="AppTheme" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:colorPrimary">@color/accent</item>
+        <item name="android:colorAccent">@color/accent</item>
+        <item name="android:colorControlActivated">@color/accent</item>
+        <item name="android:textColorPrimary">@color/text</item>
+        <item name="android:windowBackground">@color/bg</item>
+        <item name="android:statusBarColor">@color/bg</item>
+        <item name="android:navigationBarColor">@color/bg</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="27">true</item>
+    </style>
+
+    <style name="Card">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginTop">12dp</item>
+        <item name="android:background">@drawable/bg_card</item>
+        <item name="android:orientation">vertical</item>
+        <item name="android:padding">14dp</item>
+    </style>
+
+    <style name="Btn" parent="android:Widget.Material.Button.Borderless">
+        <item name="android:background">@drawable/bg_secondary</item>
+        <item name="android:textColor">@color/text</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:textSize">16sp</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:stateListAnimator">@null</item>
+        <item name="android:minHeight">52dp</item>
+        <item name="android:minWidth">0dp</item>
+        <item name="android:paddingStart">16dp</item>
+        <item name="android:paddingEnd">16dp</item>
+        <item name="android:drawableTint">@color/text</item>
+    </style>
+
+    <style name="Btn.Primary">
+        <item name="android:background">@drawable/bg_primary</item>
+        <item name="android:textColor">@color/accent_ink</item>
+        <item name="android:drawableTint">@color/accent_ink</item>
+    </style>
+
+    <style name="Tile">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">88dp</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:paddingTop">14dp</item>
+        <item name="android:paddingBottom">10dp</item>
+        <item name="android:drawablePadding">4dp</item>
+    </style>
+
+    <style name="Label">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:textColor">@color/text</item>
+        <item name="android:textSize">16sp</item>
+    </style>
+
+    <style name="Row">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:minHeight">56dp</item>
+        <item name="android:gravity">center_vertical</item>
+        <item name="android:orientation">horizontal</item>
+    </style>
+
+    <style name="Divider">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">1dp</item>
+        <item name="android:background">@color/line</item>
+    </style>
+</resources>

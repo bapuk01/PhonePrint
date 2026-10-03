@@ -1,0 +1,26 @@
+# Ключ подписи и пароли — НИКОГДА не публиковать
+*.jks
+*.keystore
+keystore.properties
+
+# Локальные пути и журнал
+local.properties
+phoneprint.log
+
+# Собранное (выкладывать через GitHub Releases)
+*.apk
+*.aab
+
+# Кэш сборки
+.gradle/
+.kotlin/
+build/
+app/build/
+.idea/
+*.iml
+
+# Временные файлы
+*.tmp
+
+# PIN-код (хэш)
+phoneprint.pin

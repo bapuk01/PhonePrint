@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1f6b57">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Печать">
+<title>Печать</title>
+<style>
+  :root{
+    --bg:#f4f3ef; --card:#ffffff; --text:#1d1d1b; --muted:#6b6a65; --line:#e3e1da;
+    --accent:#1f6b57; --accent-ink:#ffffff; --ok:#1f7a3f; --err:#b3261e; --soft:#eef5f2;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#141513; --card:#1e201d; --text:#ecebe6; --muted:#a09f98; --line:#33352f;
+           --accent:#4fb894; --accent-ink:#0d1a15; --ok:#6fcf8f; --err:#ff8a80; --soft:#1f2a25; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:16px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+       padding:max(16px,env(safe-area-inset-top)) 16px max(24px,env(safe-area-inset-bottom))}
+  main{max-width:520px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+  header h1{margin:4px 0 2px;font-size:26px;font-weight:650}
+  .muted{color:var(--muted);font-size:14px}
+  .warn{color:var(--err)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px}
+  .btn{appearance:none;border:1px solid var(--line);background:var(--card);color:var(--text);
+       border-radius:12px;padding:12px 16px;font:inherit;font-weight:550;cursor:pointer;
+       display:flex;align-items:center;justify-content:center;gap:8px;text-align:center}
+  .btn:active{transform:scale(.98)}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+  .btn.big{min-height:56px;font-size:17px;width:100%}
+  .btn:disabled{opacity:.45}
+  .btn svg{width:22px;height:22px;flex:none}
+  .pick{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  ul{list-style:none;margin:0;padding:0}
+  #queue:not(:empty){margin-top:12px;border-top:1px solid var(--line)}
+  #queue li{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}
+  #queue li:last-child{border-bottom:0}
+  .fname{flex:1;min-width:0}
+  .fname b{display:block;font-weight:550;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .st{font-size:13px;color:var(--muted)}
+  .st.ok{color:var(--ok)} .st.err{color:var(--err)}
+  .bar{height:4px;border-radius:2px;background:var(--line);margin-top:6px;overflow:hidden}
+  .bar i{display:block;height:100%;background:var(--accent);width:0}
+  .x{border:0;background:none;color:var(--muted);font-size:22px;width:36px;height:36px;cursor:pointer}
+  .row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0}
+  .row + .row{border-top:1px solid var(--line)}
+  .row > span, .row > label{flex:none}
+  input[type=text], input[type=password], select, textarea{font:inherit;color:var(--text);background:var(--bg);
+       border:1px solid var(--line);border-radius:10px;padding:10px 12px;min-width:0}
+  .row input, .row select{flex:1;max-width:62%;text-align:right}
+  .row select{text-align:left}
+  .stepper{display:flex;align-items:center;gap:6px}
+  .stepper button{width:44px;height:44px;border-radius:10px;border:1px solid var(--line);
+       background:var(--bg);color:var(--text);font-size:22px;cursor:pointer}
+  .stepper output{min-width:32px;text-align:center;font-weight:650;font-size:18px}
+  details summary{cursor:pointer;font-weight:550;padding:4px 0}
+  textarea{width:100%;margin:10px 0;resize:vertical}
+  h2{font-size:15px;font-weight:600;margin:10px 4px 6px;color:var(--muted)}
+  #history li{display:flex;gap:10px;padding:8px 4px;border-bottom:1px solid var(--line);font-size:14px}
+  #history .t{color:var(--muted);flex:none;font-variant-numeric:tabular-nums}
+  #history .n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #history .r{flex:none}
+  .hint{font-size:13px;color:var(--muted);text-align:center;margin:0}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Печать</h1>
+    <div id="printerLine" class="muted">Подключение к компьютеру…</div>
+  </header>
+
+  <section id="pinBox" class="card" hidden>
+    <p id="pinMsg" class="muted">Введите PIN-код, заданный на компьютере</p>
+    <input type="password" id="pin" inputmode="numeric" pattern="[0-9]*" maxlength="8" autocomplete="off" placeholder="PIN-код">
+    <button id="pinOk" class="btn big primary" type="button">Войти</button>
+  </section>
+
+  <section class="card">
+    <div class="pick">
+      <label class="btn big primary">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>
+        Файлы
+        <input type="file" id="files" multiple hidden
+          accept=".pdf,.jpg,.jpeg,.png,.bmp,.gif,.tif,.tiff,.doc,.docx,.rtf,.odt,.txt,.xls,.xlsx,.csv,.ods,image/*,application/pdf">
+      </label>
+      <label class="btn big">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>
+        Фото
+        <input type="file" id="camera" accept="image/*" capture="environment" hidden>
+      </label>
+    </div>
+    <ul id="queue"></ul>
+  </section>
+
+  <section class="card">
+    <details id="textBox">
+      <summary>Напечатать текст</summary>
+      <textarea id="text" rows="6" placeholder="Вставьте или наберите текст"></textarea>
+      <button id="addText" class="btn" type="button">Добавить в печать</button>
+    </details>
+  </section>
+
+  <section class="card">
+    <div class="row">
+      <span>Копии</span>
+      <div class="stepper">
+        <button type="button" data-d="-1" aria-label="Меньше">−</button>
+        <output id="copies">1</output>
+        <button type="button" data-d="1" aria-label="Больше">+</button>
+      </div>
+    </div>
+    <div class="row">
+      <label for="pages">Страницы</label>
+      <input type="text" id="pages" inputmode="text" placeholder="все, напр. 1-3,5" autocomplete="off">
+    </div>
+    <div class="row">
+      <label for="printer">Принтер</label>
+      <select id="printer"></select>
+    </div>
+  </section>
+
+  <button id="print" class="btn big primary" type="button" disabled>Печать</button>
+  <p class="hint">PDF, фото, Word, Excel, TXT</p>
+
+  <section id="historyBox" hidden>
+    <h2>Недавние</h2>
+    <ul id="history"></ul>
+  </section>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const items = [];           // {file, name, state: wait|up|printing|done|error, progress, msg}
+let copies = 1;
+let busy = false;
+
+function store(key, val) {
+  try { if (val === undefined) return localStorage.getItem(key); localStorage.setItem(key, val); } catch (e) { return null; }
+}
+
+// PIN-код: запоминается в браузере; если на ПК PIN не задан — заголовок просто игнорируется
+function authHeaders() { const p = store('pin'); return p ? { 'X-Pin': p } : {}; }
+
+function showPinBox(msg) {
+  const wasHidden = $('#pinBox').hidden;
+  $('#pinBox').hidden = false;
+  $('#pinMsg').textContent = msg;
+  $('#printerLine').innerHTML = '<span class="warn">Нужен PIN-код</span>';
+  if (wasHidden) $('#pin').focus();
+}
+
+$('#pinOk').onclick = () => {
+  store('pin', $('#pin').value.trim());
+  $('#pin').value = '';
+  loadInfo();
+};
+$('#pin').onkeydown = e => { if (e.key === 'Enter') $('#pinOk').click(); };
+
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function size(n) {
+  if (n == null) return '';
+  if (n < 1024) return n + ' Б';
+  if (n < 1048576) return Math.round(n / 1024) + ' КБ';
+  return (n / 1048576).toFixed(1) + ' МБ';
+}
+
+function render() {
+  $('#queue').innerHTML = items.map((it, i) => {
+    let st = '';
+    if (it.state === 'wait') st = `<span class="st">${size(it.file.size)}</span>`;
+    if (it.state === 'up') st = `<span class="st">Загрузка ${Math.round(it.progress * 100)}%</span><div class="bar"><i style="width:${it.progress * 100}%"></i></div>`;
+    if (it.state === 'printing') st = `<span class="st">Печатается…</span>`;
+    if (it.state === 'done') st = `<span class="st ok">✓ ${esc(it.msg)}</span>`;
+    if (it.state === 'error') st = `<span class="st err">✕ ${esc(it.msg)}</span>`;
+    const x = (it.state === 'wait' || it.state === 'error' || it.state === 'done') && !busy
+      ? `<button class="x" data-i="${i}" aria-label="Убрать">×</button>` : '';
+    return `<li><div class="fname"><b>${esc(it.name)}</b>${st}</div>${x}</li>`;
+  }).join('');
+  const todo = items.some(it => it.state === 'wait' || it.state === 'error');
+  $('#print').disabled = busy || !todo;
+  $('#print').textContent = busy ? 'Печатается…' : 'Печать';
+}
+
+function addFiles(list) {
+  for (const f of list) items.push({ file: f, name: f.name || 'photo.jpg', state: 'wait' });
+  render();
+}
+
+$('#files').onchange = e => { addFiles(e.target.files); e.target.value = ''; };
+$('#camera').onchange = e => { addFiles(e.target.files); e.target.value = ''; };
+
+$('#addText').onclick = () => {
+  const t = $('#text').value;
+  if (!t.trim()) return;
+  items.push({ file: new Blob([t], { type: 'text/plain' }), name: 'Текст.txt', state: 'wait' });
+  $('#text').value = '';
+  $('#textBox').open = false;
+  render();
+};
+
+$('#queue').onclick = e => {
+  const b = e.target.closest('.x');
+  if (b) { items.splice(+b.dataset.i, 1); render(); }
+};
+
+document.querySelectorAll('.stepper button').forEach(b => b.onclick = () => {
+  copies = Math.min(50, Math.max(1, copies + +b.dataset.d));
+  $('#copies').textContent = copies;
+});
+
+$('#printer').onchange = () => store('printerChoice', $('#printer').value);
+
+function upload(it) {
+  return new Promise(resolve => {
+    const x = new XMLHttpRequest();
+    const pages = $('#pages').value.replace(/\s/g, '');
+    x.open('POST', '/api/print?copies=' + copies + '&pages=' + encodeURIComponent(pages));
+    x.setRequestHeader('X-File-Name', encodeURIComponent(it.name));
+    x.setRequestHeader('X-Printer', encodeURIComponent($('#printer').value || ''));
+    for (const [k, v] of Object.entries(authHeaders())) x.setRequestHeader(k, v);
+    it.state = 'up'; it.progress = 0; render();
+    x.upload.onprogress = e => { if (e.lengthComputable) { it.progress = e.loaded / e.total; render(); } };
+    x.upload.onload = () => { it.state = 'printing'; render(); };
+    x.onload = () => {
+      let r;
+      try { r = JSON.parse(x.responseText); } catch (e) { r = { ok: false, message: 'Ошибка на компьютере (' + x.status + ')' }; }
+      it.state = r.ok ? 'done' : 'error';
+      it.msg = r.message || (r.ok ? 'Готово' : 'Ошибка');
+      render(); resolve();
+    };
+    x.onerror = () => { it.state = 'error'; it.msg = 'Нет связи с компьютером'; render(); resolve(); };
+    x.send(it.file);
+  });
+}
+
+$('#print').onclick = async () => {
+  if (busy) return;
+  busy = true; render();
+  for (const it of items) if (it.state === 'wait' || it.state === 'error') await upload(it);
+  busy = false; render();
+  loadInfo();
+};
+
+async function loadInfo() {
+  try {
+    const r = await fetch('/api/info', { cache: 'no-store', headers: authHeaders() });
+    const info = await r.json();
+    if (r.status === 401) {
+      // неверный сохранённый PIN забываем, чтобы автообновление не плодило неудачные попытки
+      const wrong = !!store('pin');
+      store('pin', '');
+      showPinBox(wrong ? 'Неверный PIN-код. Попробуйте ещё раз' : 'Введите PIN-код, заданный на компьютере');
+      return;
+    }
+    if (r.status === 429) { showPinBox(info.message || 'Слишком много попыток. Подождите минуту'); return; }
+    $('#pinBox').hidden = true;
+    // Пустое значение = принтер по умолчанию на ПК (компьютер выбирает его сам в момент печати)
+    const sel = $('#printer');
+    const prev = sel.options.length ? sel.value : (store('printerChoice') || '');
+    sel.innerHTML = `<option value="">По умолчанию на ПК (${esc(info.printer)})</option>` +
+      info.printers.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join('');
+    sel.value = info.printers.includes(prev) ? prev : '';
+
+    let line = esc(info.printer);
+    if (info.status && info.status !== 'Normal') line += ` · <span class="warn">${esc(info.status)}</span>`;
+    if (info.queue) line += ` · в очереди: ${info.queue}`;
+    if (info.dryRun) line += ` · <span class="warn">пробный режим</span>`;
+    $('#printerLine').innerHTML = line;
+
+    $('#historyBox').hidden = !info.history.length;
+    $('#history').innerHTML = info.history.map(h =>
+      `<li><span class="t">${esc(h.time)}</span><span class="n">${esc(h.name)}</span>` +
+      `<span class="r ${h.ok ? 'st ok' : 'st err'}" title="${esc(h.message)}">${h.ok ? '✓' : '✕'}</span></li>`).join('');
+  } catch (e) {
+    $('#printerLine').innerHTML = '<span class="warn">Компьютер недоступен. Он включён и PhonePrint запущен?</span>';
+  }
+}
+
+render();
+loadInfo();
+setInterval(() => { if (!busy) loadInfo(); }, 15000);
+</script>
+</body>
+</html>

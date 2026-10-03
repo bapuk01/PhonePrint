@@ -1,0 +1,2 @@
+# Скопируйте в local.properties (Android Studio создаёт его сам)
+sdk.dir=C\:\path\to\Android\sdk
