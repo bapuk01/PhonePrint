@@ -8,6 +8,15 @@
 Телефон (приложение «Печать» / браузер)  ──Wi-Fi, HTTP :8080──►  ПК: PhonePrint.ps1  ──►  принтер Windows
 ```
 
+## Скриншоты
+
+| Приложение | Запрос PIN-кода | Веб-страница | Веб-страница: PIN |
+|:--:|:--:|:--:|:--:|
+| <img src="docs/app-main.png" width="190"> | <img src="docs/app-pin.png" width="190"> | <img src="docs/web-main.png" width="190"> | <img src="docs/web-pin.png" width="190"> |
+
+(Скриншоты сделаны на демонстрационных данных: названия принтеров и файлов вымышлены.)
+
+
 ---
 
 ## 1. Состав проекта
@@ -147,7 +156,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -STA -File PhonePrint.ps1 -Port 18
 | | |
 |---|---|
 | Пакет | `ru.phoneprint` |
-| Версия | `versionCode 3`, `versionName 1.0` |
+| Версия | `versionCode 4`, `versionName 1.1` |
 | minSdk / target / compile | 26 (Android 8) / 35 / 35 |
 | Зависимости | только `androidx.core:core-ktx:1.13.1` |
 | Инструменты | JDK 17, Gradle 8.11.1, AGP 8.7.3, Kotlin 2.0.21, build-tools 35.0.0 |
