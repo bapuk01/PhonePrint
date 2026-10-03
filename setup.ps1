@@ -2,12 +2,15 @@
   Одноразовая настройка PhonePrint (нужны права администратора — окно UAC появится само):
     - разрешает программе слушать порт (netsh http urlacl);
     - открывает порт в брандмауэре только для локальной сети;
-    - добавляет PhonePrint в автозагрузку и запускает его.
+    - добавляет PhonePrint в автозагрузку и запускает его;
+    - если на ПК нет Ghostscript (нужен для печати PDF), скачивает и тихо устанавливает его
+      с официального сайта разработчиков (Artifex). Отключить: setup.cmd -NoGhostscript
   Удаление:  setup.cmd -Uninstall
 #>
 param(
     [int]$Port = 8080,
     [switch]$Uninstall,
+    [switch]$NoGhostscript,
     [string]$UserSid = '',
     [string]$StartupDir = '',
     [switch]$Elevated
@@ -27,6 +30,7 @@ if (-not $Elevated) {
     $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"",
                  '-Elevated', '-Port', $Port, '-UserSid', $sid, '-StartupDir', "`"$startup`"")
     if ($Uninstall) { $argList += '-Uninstall' }
+    if ($NoGhostscript) { $argList += '-NoGhostscript' }
     $p = Start-Process powershell.exe -Verb RunAs -ArgumentList $argList -Wait -PassThru
     if ($p.ExitCode -ne 0) { Write-Host 'Настройка не завершена.' -ForegroundColor Red; exit 1 }
     if (-not $Uninstall) {
@@ -39,6 +43,48 @@ if (-not $Elevated) {
 if (-not $isAdmin) { Write-Host 'Нужны права администратора.'; exit 1 }
 
 $lnk = Join-Path $StartupDir 'PhonePrint.lnk'
+
+# --- Ghostscript --------------------------------------------------------------
+function Find-Ghostscript {
+    $candidates = @(
+        "$env:ProgramFiles\PDF24\gs\bin\gswin64c.exe",
+        "${env:ProgramFiles(x86)}\PDF24\gs\bin\gswinc.exe"
+    )
+    $candidates += @(Get-ChildItem "$env:ProgramFiles\gs\gs*\bin\gswin64c.exe" -ErrorAction SilentlyContinue |
+                     Sort-Object FullName -Descending | ForEach-Object FullName)
+    foreach ($c in $candidates) { if ($c -and (Test-Path $c)) { return $c } }
+    return $null
+}
+
+# Ставит Ghostscript, если его нет. Ошибка здесь не должна ломать остальную настройку.
+function Install-Ghostscript {
+    $existing = Find-Ghostscript
+    if ($existing) { Write-Host "Ghostscript уже установлен: $existing"; return }
+
+    Write-Host 'Ghostscript не найден - скачиваю с официального сайта (около 65 МБ)...'
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $installer = Join-Path $env:TEMP 'ghostscript-setup.exe'
+    try {
+        $rel = Invoke-RestMethod 'https://api.github.com/repos/ArtifexSoftware/ghostpdl-downloads/releases/latest' `
+            -Headers @{ 'User-Agent' = 'PhonePrint-setup' } -TimeoutSec 30
+        $asset = @($rel.assets | Where-Object { $_.name -match '^gs\d+w64\.exe$' }) | Select-Object -First 1
+        if (-not $asset) { throw 'в релизе нет установщика для Windows x64' }
+        Invoke-WebRequest $asset.browser_download_url -OutFile $installer -UseBasicParsing -TimeoutSec 900
+        Write-Host "Устанавливаю $($asset.name)..."
+        $p = Start-Process $installer -ArgumentList '/S' -Wait -PassThru
+        if ($p.ExitCode -ne 0) { throw "установщик завершился с кодом $($p.ExitCode)" }
+    } catch {
+        Write-Host "Не удалось установить Ghostscript автоматически: $($_.Exception.Message)" -ForegroundColor Yellow
+        Write-Host 'Установите его вручную: https://ghostscript.com/releases/gsdnld.html (или PDF24 Creator). Без него PDF не печатаются.' -ForegroundColor Yellow
+        return
+    } finally {
+        Remove-Item $installer -Force -ErrorAction SilentlyContinue
+    }
+    $found = Find-Ghostscript
+    if ($found) { Write-Host "Ghostscript установлен: $found" -ForegroundColor Green }
+    else { Write-Host 'Установщик отработал, но Ghostscript не найден - проверьте установку вручную.' -ForegroundColor Yellow }
+}
+
 
 try {
     netsh http delete urlacl url=$url 2>&1 | Out-Null
@@ -62,8 +108,9 @@ try {
         $s.IconLocation     = "$env:WINDIR\System32\printui.exe,0"
         $s.Save()
         Write-Host 'Порт открыт, автозагрузка добавлена.'
+        if (-not $NoGhostscript) { Install-Ghostscript }
     }
-    Start-Sleep -Seconds 2
+    Start-Sleep -Seconds 3
     exit 0
 } catch {
     Write-Host $_ -ForegroundColor Red
