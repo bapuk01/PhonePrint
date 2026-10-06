@@ -199,6 +199,37 @@ function Get-TargetPrinter([string]$requested) {
     return Get-DefaultPrinter
 }
 
+# --- двусторонняя печать ------------------------------------------------------
+# Принтер «поддерживает» дуплекс, если его драйвер в PrintCapabilities заявляет двустороннюю печать.
+# Результат кэшируется: опрос драйвера бывает небыстрым (особенно у сетевых принтеров).
+$script:DuplexCache  = @{}
+$script:PrintServer  = $null
+try { Add-Type -AssemblyName System.Printing; $script:PrintServer = New-Object System.Printing.LocalPrintServer } catch {}
+
+function Test-Duplex([string]$name) {
+    if (-not $name -or -not $script:PrintServer) { return $false }
+    $c = $script:DuplexCache[$name]
+    if ($c -and ((Get-Date) - $c.At).TotalSeconds -lt 120) { return $c.Value }
+    $ok = $false
+    try {
+        $bs = [string][char]92
+        $server = $script:PrintServer; $queueName = $name; $remote = $null
+        # Сетевой принтер вида (два обратных слэша)сервер(слэш)имя: очередь запрашиваем у компьютера, где он общий
+        if ($name.StartsWith($bs + $bs)) {
+            $parts = $name.Substring(2).Split([char[]]@(92), 2)
+            $remote = New-Object System.Printing.PrintServer($bs + $bs + $parts[0])
+            $server = $remote; $queueName = $parts[1]
+        }
+        try {
+            $q = $server.GetPrintQueue($queueName)
+            try { $ok = @($q.GetPrintCapabilities().DuplexingCapability) -contains [System.Printing.Duplexing]::TwoSidedLongEdge }
+            finally { $q.Dispose() }
+        } finally { if ($remote) { $remote.Dispose() } }
+    } catch {}
+    $script:DuplexCache[$name] = @{ Value = $ok; At = Get-Date }
+    return $ok
+}
+
 # --- печать -------------------------------------------------------------------
 function Invoke-Ghostscript([string[]]$arguments) {
     $psi = New-Object System.Diagnostics.ProcessStartInfo $Gs, ($arguments -join ' ')
@@ -219,7 +250,7 @@ function Invoke-Ghostscript([string[]]$arguments) {
     }
 }
 
-function Print-Pdf([string]$pdf, [string]$printerName, [int]$copies, [string]$pages) {
+function Print-Pdf([string]$pdf, [string]$printerName, [int]$copies, [string]$pages, [bool]$duplex = $false) {
     if (-not $Gs) { throw 'Не найден Ghostscript (ставится вместе с PDF24).' }
     $a = @('-dBATCH', '-dNOPAUSE', '-dSAFER', '-dNoCancel', '-dQUIET', '-dPDFFitPage')
     if ($DryRun) {
@@ -229,6 +260,13 @@ function Print-Pdf([string]$pdf, [string]$printerName, [int]$copies, [string]$pa
         $a += @('-sDEVICE=mswinpr2', "`"-sOutputFile=%printer%$printerName`"")
     }
     if ($pages) { $a += "-sPageList=$pages" }
+    if ($duplex -and -not $DryRun) {
+        # Двусторонняя печать по длинному краю. Каждая копия — отдельное задание, чтобы следующая копия
+        # начиналась с чистого листа, а не на обороте последней страницы предыдущей.
+        $a += @('-c', '"<</Duplex true /Tumble false>> setpagedevice"', '-f')
+        1..$copies | ForEach-Object { Invoke-Ghostscript ($a + "`"$pdf`"") }
+        return
+    }
     # Один и тот же файл N раз = N копий одним заданием (с подбором по копиям)
     $a += @(1..$copies | ForEach-Object { "`"$pdf`"" })
     Invoke-Ghostscript $a
@@ -319,19 +357,19 @@ function Convert-ExcelToPdf([string]$src, [string]$pdf) {
     }
 }
 
-function Invoke-PrintJob([string]$file, [string]$ext, [string]$name, [string]$printerName, [int]$copies, [string]$pages) {
+function Invoke-PrintJob([string]$file, [string]$ext, [string]$name, [string]$printerName, [int]$copies, [string]$pages, [bool]$duplex = $false) {
     if ($ext -eq 'pdf') {
-        Print-Pdf $file $printerName $copies $pages
+        Print-Pdf $file $printerName $copies $pages $duplex
     } elseif ($ext -match '^(jpe?g|png|bmp|gif|tiff?)$') {
         Print-Image $file $printerName $copies $name
     } elseif ($ext -match '^(docx?|rtf|odt|txt)$') {
         if ($ext -eq 'txt') { Convert-TextToUtf8Bom $file }
         $pdf = "$file.pdf"
-        try { Convert-WordToPdf $file $pdf; Print-Pdf $pdf $printerName $copies $pages }
+        try { Convert-WordToPdf $file $pdf; Print-Pdf $pdf $printerName $copies $pages $duplex }
         finally { Remove-Item $pdf -Force -ErrorAction SilentlyContinue }
     } elseif ($ext -match '^(xlsx?|csv|ods)$') {
         $pdf = "$file.pdf"
-        try { Convert-ExcelToPdf $file $pdf; Print-Pdf $pdf $printerName $copies $pages }
+        try { Convert-ExcelToPdf $file $pdf; Print-Pdf $pdf $printerName $copies $pages $duplex }
         finally { Remove-Item $pdf -Force -ErrorAction SilentlyContinue }
     } elseif ($ext -match '^hei[cf]$') {
         throw 'Формат HEIC не поддерживается. На iPhone: Настройки → Камера → Форматы → «Наиболее совместимый».'
@@ -368,10 +406,14 @@ function Get-Info {
     $queue  = 0
     try { $status = "$((Get-Printer -Name $target).PrinterStatus)" } catch {}
     try { $queue  = @(Get-PrintJob -PrinterName $target).Count } catch {}
+    $names = @(Get-Printer | Sort-Object Name | ForEach-Object Name)
+    $duplexMap = @{}
+    foreach ($n in $names) { $duplexMap[$n] = [bool](Test-Duplex $n) }
     @{
         app      = $AppName
         printer  = $target
-        printers = @(Get-Printer | Sort-Object Name | ForEach-Object Name)
+        printers = $names
+        duplex   = $duplexMap
         status   = $status
         queue    = $queue
         word     = $HasWord
@@ -398,10 +440,13 @@ function Receive-PrintJob($ctx) {
     $copies = [Math]::Min([Math]::Max($copies, 1), 50)
     $pages = "$($req.QueryString['pages'])" -replace '\s', ''
     $printerName = Get-TargetPrinter (Get-HeaderText $req 'X-Printer')
+    $duplex = "$($req.QueryString['duplex'])" -eq '1'
+    $duplexSkipped = $false
+    if ($duplex -and -not (Test-Duplex $printerName)) { $duplex = $false; $duplexSkipped = $true }
 
     $entry = [ordered]@{
         time = (Get-Date).ToString('HH:mm'); name = $name; printer = $printerName
-        copies = $copies; pages = $pages; ok = $false; message = ''
+        copies = $copies; pages = $pages; duplex = $duplex; ok = $false; message = ''
     }
     $file = Join-Path $WorkDir ('{0:yyyyMMdd_HHmmss}_{1}.{2}' -f (Get-Date), (Get-Random -Maximum 99999), $ext)
     try {
@@ -411,10 +456,12 @@ function Receive-PrintJob($ctx) {
         try { $req.InputStream.CopyTo($fs) } finally { $fs.Close() }
         if ((Get-Item $file).Length -eq 0) { throw 'Пустой файл.' }
 
-        Invoke-PrintJob $file $ext $name $printerName $copies $pages
+        Invoke-PrintJob $file $ext $name $printerName $copies $pages $duplex
         $entry.ok = $true
         $entry.message = if ($DryRun) { "Пробный режим: PDF в $WorkDir" } else { 'Отправлено на печать' }
-        Write-Log "OK   $name -> $printerName, копий: $copies, страницы: $(if ($pages) { $pages } else { 'все' })"
+        if ($duplex) { $entry.message += ' (двусторонняя)' }
+        if ($duplexSkipped) { $entry.message += ' (этот принтер не поддерживает двустороннюю печать — печать с одной стороны)' }
+        Write-Log "OK   $name -> $printerName, копий: $copies, страницы: $(if ($pages) { $pages } else { 'все' })$(if ($duplex) { ', двусторонняя' })"
         Show-Balloon 'Печать' "$name → $printerName"
     } catch {
         $entry.message = $_.Exception.Message

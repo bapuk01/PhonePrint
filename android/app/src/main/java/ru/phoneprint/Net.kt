@@ -105,11 +105,12 @@ object Net {
         copies: Int,
         pages: String,
         printer: String,
+        duplex: Boolean,
         pin: String,
         onProgress: (Float) -> Unit,
         onSent: () -> Unit,
     ): Pair<Boolean, String> {
-        val c = URL("$base/api/print?copies=$copies&pages=${enc(pages)}").openConnection() as HttpURLConnection
+        val c = URL("$base/api/print?copies=$copies&pages=${enc(pages)}${if (duplex) "&duplex=1" else ""}").openConnection() as HttpURLConnection
         try {
             c.requestMethod = "POST"
             c.doOutput = true

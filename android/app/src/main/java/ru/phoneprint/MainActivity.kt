@@ -18,7 +18,9 @@ import android.view.Gravity
 import android.view.View
 import android.webkit.MimeTypeMap
 import android.widget.ArrayAdapter
+import android.widget.AdapterView
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageButton
@@ -50,6 +52,7 @@ class MainActivity : Activity() {
         const val KEY_CAMERA_FILE = "cameraFile"
         // Новый ключ: в версии 1 здесь сохранялось имя HP даже без выбора пользователя
         const val KEY_PRINTER = "printerChoice"
+        const val KEY_DUPLEX = "duplex"
         val PAGES_RE = Regex("^\\d+(-\\d+)?(,\\d+(-\\d+)?)*$")
         val MIME_TYPES = arrayOf(
             "application/pdf", "image/*", "text/plain", "text/csv", "text/comma-separated-values",
@@ -69,6 +72,8 @@ class MainActivity : Activity() {
 
     private var pin = ""                        // PIN-код, заданный на компьютере (пусто = не задан)
     private var pinDialog: AlertDialog? = null
+    private var duplexSupport: Map<String, Boolean> = emptyMap()   // имя принтера на ПК -> умеет двустороннюю печать
+    private var defaultPrinterName = ""
     private var server: String? = null          // http://192.168.1.50:8080
     private var copies = 1
     private var busy = false
@@ -84,6 +89,8 @@ class MainActivity : Activity() {
     private lateinit var copiesView: TextView
     private lateinit var pages: EditText
     private lateinit var printer: Spinner
+    private lateinit var duplexBox: View
+    private lateinit var duplex: CheckBox
     private lateinit var btnPrint: Button
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -101,6 +108,14 @@ class MainActivity : Activity() {
         copiesView = findViewById(R.id.copies)
         pages = findViewById(R.id.pages)
         printer = findViewById(R.id.printer)
+        duplexBox = findViewById(R.id.duplexBox)
+        duplex = findViewById(R.id.duplex)
+        duplex.isChecked = prefs.getBoolean(KEY_DUPLEX, false)
+        duplex.setOnCheckedChangeListener { _, on -> prefs.edit().putBoolean(KEY_DUPLEX, on).apply() }
+        printer.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) = updateDuplexVisibility()
+            override fun onNothingSelected(p: AdapterView<*>?) = Unit
+        }
         btnPrint = findViewById(R.id.btnPrint)
 
         applyInsets()
@@ -332,6 +347,11 @@ class MainActivity : Activity() {
         }
         printer.setSelection(printerValues.indexOf(current).coerceAtLeast(0))
 
+        // Двусторонняя печать: галочка видна только у принтеров, чей драйвер её поддерживает
+        defaultPrinterName = target
+        duplexSupport = info.optJSONObject("duplex")?.let { d -> d.keys().asSequence().associateWith { d.optBoolean(it) } }.orEmpty()
+        updateDuplexVisibility()
+
         // недавние задания
         history.removeAllViews()
         val h = info.optJSONArray("history")
@@ -379,6 +399,16 @@ class MainActivity : Activity() {
             }
             .setNegativeButton("Отмена", null)
             .show()
+    }
+
+    /** Имя принтера на ПК, на который сейчас уйдёт печать ("" в списке = принтер по умолчанию). */
+    private fun selectedPrinterName(): String =
+        printerValues.getOrNull(printer.selectedItemPosition).orEmpty().ifEmpty { defaultPrinterName }
+
+    private fun duplexAvailable() = duplexSupport[selectedPrinterName()] == true
+
+    private fun updateDuplexVisibility() {
+        duplexBox.visibility = if (duplexAvailable()) View.VISIBLE else View.GONE
     }
 
     private fun showSettings() {
@@ -439,6 +469,7 @@ class MainActivity : Activity() {
         val printerName = printerValues.getOrNull(printer.selectedItemPosition).orEmpty()
         prefs.edit().putString(KEY_PRINTER, printerName).apply()
         val n = copies
+        val useDuplex = duplexAvailable() && duplex.isChecked
         val todo = items.filter { it.state == PrintItem.State.WAIT || it.state == PrintItem.State.ERROR }
         if (todo.isEmpty()) return
 
@@ -448,7 +479,7 @@ class MainActivity : Activity() {
             for (item in todo) {
                 main.post { item.state = PrintItem.State.UPLOAD; item.progress = 0f; render() }
                 val (ok, msg) = try {
-                    Net.upload(contentResolver, base, item, n, pagesText, printerName, pin,
+                    Net.upload(contentResolver, base, item, n, pagesText, printerName, useDuplex, pin,
                         onProgress = { p -> main.post { item.progress = p; renderThrottled() } },
                         onSent = { main.post { item.state = PrintItem.State.PRINTING; render() } })
                 } catch (e: Exception) {

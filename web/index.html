@@ -46,12 +46,14 @@
   .bar i{display:block;height:100%;background:var(--accent);width:0}
   .x{border:0;background:none;color:var(--muted);font-size:22px;width:36px;height:36px;cursor:pointer}
   .row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0}
+  .row[hidden]{display:none}
   .row + .row{border-top:1px solid var(--line)}
   .row > span, .row > label{flex:none}
   input[type=text], input[type=password], select, textarea{font:inherit;color:var(--text);background:var(--bg);
        border:1px solid var(--line);border-radius:10px;padding:10px 12px;min-width:0}
   .row input, .row select{flex:1;max-width:62%;text-align:right}
   .row select{text-align:left}
+  .row input[type=checkbox]{flex:none;max-width:none;width:26px;height:26px;accent-color:var(--accent)}
   .stepper{display:flex;align-items:center;gap:6px}
   .stepper button{width:44px;height:44px;border-radius:10px;border:1px solid var(--line);
        background:var(--bg);color:var(--text);font-size:22px;cursor:pointer}
@@ -122,6 +124,10 @@
     <div class="row">
       <label for="printer">Принтер</label>
       <select id="printer"></select>
+    </div>
+    <div class="row" id="duplexRow" hidden>
+      <label for="duplex">Двусторонняя печать</label>
+      <input type="checkbox" id="duplex">
     </div>
   </section>
 
@@ -215,13 +221,22 @@ document.querySelectorAll('.stepper button').forEach(b => b.onclick = () => {
   $('#copies').textContent = copies;
 });
 
-$('#printer').onchange = () => store('printerChoice', $('#printer').value);
+let duplexSupport = {}, defaultPrinter = '';
+// Галочка двусторонней печати видна только у принтеров, чей драйвер её поддерживает
+function updateDuplex() {
+  const name = $('#printer').value || defaultPrinter;
+  $('#duplexRow').hidden = duplexSupport[name] !== true;
+}
+$('#duplex').checked = store('duplex') === '1';
+$('#duplex').onchange = () => store('duplex', $('#duplex').checked ? '1' : '0');
+$('#printer').onchange = () => { store('printerChoice', $('#printer').value); updateDuplex(); };
 
 function upload(it) {
   return new Promise(resolve => {
     const x = new XMLHttpRequest();
     const pages = $('#pages').value.replace(/\s/g, '');
-    x.open('POST', '/api/print?copies=' + copies + '&pages=' + encodeURIComponent(pages));
+    const duplex = !$('#duplexRow').hidden && $('#duplex').checked;
+    x.open('POST', '/api/print?copies=' + copies + '&pages=' + encodeURIComponent(pages) + (duplex ? '&duplex=1' : ''));
     x.setRequestHeader('X-File-Name', encodeURIComponent(it.name));
     x.setRequestHeader('X-Printer', encodeURIComponent($('#printer').value || ''));
     for (const [k, v] of Object.entries(authHeaders())) x.setRequestHeader(k, v);
@@ -267,6 +282,9 @@ async function loadInfo() {
     sel.innerHTML = `<option value="">По умолчанию на ПК (${esc(info.printer)})</option>` +
       info.printers.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join('');
     sel.value = info.printers.includes(prev) ? prev : '';
+    duplexSupport = info.duplex || {};
+    defaultPrinter = info.printer;
+    updateDuplex();
 
     let line = esc(info.printer);
     if (info.status && info.status !== 'Normal') line += ` · <span class="warn">${esc(info.status)}</span>`;

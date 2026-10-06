@@ -196,6 +196,28 @@
                     android:layout_height="44dp"
                     android:layout_weight="1" />
             </LinearLayout>
+
+            <!-- Показывается только если выбранный принтер поддерживает двустороннюю печать -->
+            <LinearLayout
+                android:id="@+id/duplexBox"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <View style="@style/Divider" />
+
+                <LinearLayout style="@style/Row">
+
+                    <CheckBox
+                        android:id="@+id/duplex"
+                        style="@style/Label"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:minHeight="56dp"
+                        android:text="Двусторонняя печать" />
+                </LinearLayout>
+            </LinearLayout>
         </LinearLayout>
 
         <Button
