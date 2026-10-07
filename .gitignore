@@ -24,3 +24,7 @@ app/build/
 
 # PIN-код (хэш)
 phoneprint.pin
+
+# Сборка релиза
+/dist/
+/redist/

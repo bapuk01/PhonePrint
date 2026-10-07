@@ -57,20 +57,31 @@ function Find-Ghostscript {
 }
 
 # Ставит Ghostscript, если его нет. Ошибка здесь не должна ломать остальную настройку.
+# Сначала берёт установщик из папки redist (он лежит в архиве PhonePrint-...-windows.zip — работает без интернета),
+# если его нет — скачивает последний с официального сайта.
 function Install-Ghostscript {
     $existing = Find-Ghostscript
     if ($existing) { Write-Host "Ghostscript уже установлен: $existing"; return }
 
-    Write-Host 'Ghostscript не найден - скачиваю с официального сайта (около 65 МБ)...'
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    $installer = Join-Path $env:TEMP 'ghostscript-setup.exe'
+    $installer = $null; $downloaded = $false
+    $local = Get-ChildItem (Join-Path $PSScriptRoot 'redist') -Filter 'gs*w64.exe' -ErrorAction SilentlyContinue |
+             Sort-Object Name -Descending | Select-Object -First 1
     try {
-        $rel = Invoke-RestMethod 'https://api.github.com/repos/ArtifexSoftware/ghostpdl-downloads/releases/latest' `
-            -Headers @{ 'User-Agent' = 'PhonePrint-setup' } -TimeoutSec 30
-        $asset = @($rel.assets | Where-Object { $_.name -match '^gs\d+w64\.exe$' }) | Select-Object -First 1
-        if (-not $asset) { throw 'в релизе нет установщика для Windows x64' }
-        Invoke-WebRequest $asset.browser_download_url -OutFile $installer -UseBasicParsing -TimeoutSec 900
-        Write-Host "Устанавливаю $($asset.name)..."
+        if ($local) {
+            $installer = $local.FullName
+            Write-Host "Ghostscript не найден - ставлю из комплекта ($($local.Name))..."
+        } else {
+            Write-Host 'Ghostscript не найден - скачиваю с официального сайта (около 65 МБ)...'
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            $installer = Join-Path $env:TEMP 'ghostscript-setup.exe'
+            $downloaded = $true
+            $rel = Invoke-RestMethod 'https://api.github.com/repos/ArtifexSoftware/ghostpdl-downloads/releases/latest' `
+                -Headers @{ 'User-Agent' = 'PhonePrint-setup' } -TimeoutSec 30
+            $asset = @($rel.assets | Where-Object { $_.name -like 'gs*w64.exe' }) | Select-Object -First 1
+            if (-not $asset) { throw 'в релизе нет установщика для Windows x64' }
+            Invoke-WebRequest $asset.browser_download_url -OutFile $installer -UseBasicParsing -TimeoutSec 900
+            Write-Host "Устанавливаю $($asset.name)..."
+        }
         $p = Start-Process $installer -ArgumentList '/S' -Wait -PassThru
         if ($p.ExitCode -ne 0) { throw "установщик завершился с кодом $($p.ExitCode)" }
     } catch {
@@ -78,7 +89,7 @@ function Install-Ghostscript {
         Write-Host 'Установите его вручную: https://ghostscript.com/releases/gsdnld.html (или PDF24 Creator). Без него PDF не печатаются.' -ForegroundColor Yellow
         return
     } finally {
-        Remove-Item $installer -Force -ErrorAction SilentlyContinue
+        if ($downloaded -and $installer) { Remove-Item $installer -Force -ErrorAction SilentlyContinue }
     }
     $found = Find-Ghostscript
     if ($found) { Write-Host "Ghostscript установлен: $found" -ForegroundColor Green }

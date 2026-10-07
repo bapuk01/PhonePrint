@@ -1,0 +1,14 @@
+Сторонние компоненты PhonePrint
+================================
+
+Ghostscript (GPL Ghostscript)
+  Copyright (C) Artifex Software, Inc.
+  Лицензия: GNU Affero General Public License v3 (AGPL-3.0) — https://www.gnu.org/licenses/agpl-3.0.html
+  Сайт и исходный код: https://ghostscript.com/ , https://github.com/ArtifexSoftware/ghostpdl
+  Назначение: печать PDF. PhonePrint запускает gswin64c.exe как отдельную программу.
+
+  В архиве PhonePrint-<версия>-windows.zip (папка redist) лежит неизменённый официальный установщик
+  Ghostscript, скачанный с https://github.com/ArtifexSoftware/ghostpdl-downloads . Его можно не использовать:
+  setup.cmd не станет его ставить, если Ghostscript (или PDF24) уже есть на компьютере.
+
+Остальной код PhonePrint распространяется по лицензии MIT (см. LICENSE).

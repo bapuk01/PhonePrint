@@ -176,13 +176,32 @@ $HasWord  = Test-Path 'Registry::HKEY_CLASSES_ROOT\Word.Application'
 $HasExcel = Test-Path 'Registry::HKEY_CLASSES_ROOT\Excel.Application'
 $History  = New-Object System.Collections.ArrayList
 
+# IPv4-адрес этого ПК в локальной сети. Перебираем сетевые адаптеры и выбираем лучший: с основным шлюзом,
+# из частного диапазона, физический (не VPN/виртуальный). Раньше брался только адаптер со шлюзом, и на ПК без
+# шлюза/с нестандартной сетью показывался 127.0.0.1.
 function Get-LanIp {
+    $best = $null; $bestScore = -1000
     try {
-        $cfg = Get-NetIPConfiguration |
-               Where-Object { $_.IPv4DefaultGateway -and $_.NetAdapter.Status -eq 'Up' } |
-               Select-Object -First 1
-        if ($cfg) { return $cfg.IPv4Address[0].IPAddress }
+        foreach ($nic in [System.Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces()) {
+            if ($nic.OperationalStatus -ne 'Up') { continue }
+            if ($nic.NetworkInterfaceType -in 'Loopback', 'Tunnel') { continue }
+            $props = $nic.GetIPProperties()
+            $label = "$($nic.Name) $($nic.Description)"
+            foreach ($ua in $props.UnicastAddresses) {
+                if ($ua.Address.AddressFamily -ne 'InterNetwork') { continue }
+                $ip = $ua.Address.ToString()
+                if ($ip.StartsWith('127.') -or $ip.StartsWith('169.254.')) { continue }
+                $score = 0
+                if (@($props.GatewayAddresses | Where-Object { $_.Address.AddressFamily -eq 'InterNetwork' -and $_.Address.ToString() -ne '0.0.0.0' }).Count) { $score += 100 }
+                $o1 = [int]$ip.Split('.')[0]; $o2 = [int]$ip.Split('.')[1]
+                if ($o1 -eq 10 -or ($o1 -eq 192 -and $o2 -eq 168) -or ($o1 -eq 172 -and $o2 -ge 16 -and $o2 -le 31)) { $score += 50 }
+                if ($nic.NetworkInterfaceType -in 'Wireless80211', 'Ethernet', 'GigabitEthernet') { $score += 20 }
+                if ($label -match 'vEthernet|VirtualBox|VMware|Hyper-V|Hamachi|TAP|VPN|Wintun|WireGuard|Tailscale|ZeroTier|Bluetooth|Docker|WSL|Loopback') { $score -= 150 }
+                if ($score -gt $bestScore) { $best = $ip; $bestScore = $score }
+            }
+        }
     } catch {}
+    if ($best) { return $best }
     return '127.0.0.1'
 }
 
