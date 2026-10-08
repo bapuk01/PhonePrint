@@ -290,6 +290,7 @@ class MainActivity : Activity() {
         connecting = true
         val saved = server
         if (saved == null) status.text = "Ищу компьютер в сети…"
+        Net.bindToLan(this)     // иначе при Wi-Fi без интернета запросы уходят в мобильную сеть
         Thread {
             var base = saved
             var info = saved?.let { Net.info(it, pin) }
@@ -317,7 +318,11 @@ class MainActivity : Activity() {
                         else -> showInfo(found)
                     }
                 } else {
-                    status.text = "Компьютер не найден. Он включён и PhonePrint запущен? Адрес — в ⚙"
+                    val mine = Net.ownAddresses()
+                    status.text = "Компьютер не найден. Он включён и PhonePrint запущен? Адрес — в ⚙" + when {
+                        mine.isEmpty() -> "\nТелефон не подключён к Wi-Fi."
+                        else -> "\nТелефон в сети ${mine.joinToString()} — адрес ПК должен начинаться так же (первые три числа)."
+                    }
                     status.setTextColor(getColor(R.color.err))
                 }
             }
