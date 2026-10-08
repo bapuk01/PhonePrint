@@ -1,6 +1,9 @@
 package ru.phoneprint
 
 import android.content.ContentResolver
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import org.json.JSONObject
 import java.io.IOException
@@ -59,24 +62,59 @@ object Net {
         null
     }
 
-    /** Ищет компьютер с PhonePrint в локальной сети (перебор x.x.x.1–254 на порту 8080). */
-    fun discover(pin: String = ""): Pair<String, JSONObject>? {
-        val own = try {
-            NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
-                .filter { runCatching { it.isUp && !it.isLoopback }.getOrDefault(false) }
-                .sortedByDescending { it.name.startsWith("wlan") }
-                .flatMap { it.inetAddresses.toList() }
-                .filterIsInstance<Inet4Address>()
-                .filter { it.isSiteLocalAddress }
+    /**
+     * Привязывает сетевые запросы приложения к Wi-Fi/Ethernet. Если у Wi-Fi нет интернета (роутер без выхода
+     * в сеть, чужая сеть с порталом авторизации), Android по умолчанию гонит весь трафик через мобильный интернет,
+     * и компьютер с адресом 192.168.x.x оттуда не виден — хотя телефон к тому же Wi-Fi подключён.
+     */
+    fun bindToLan(ctx: Context) {
+        try {
+            val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            @Suppress("DEPRECATION")
+            val lan = cm.allNetworks.firstOrNull { n ->
+                val caps = cm.getNetworkCapabilities(n)
+                caps != null && !caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) &&
+                    (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                        caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET))
+            }
+            cm.bindProcessToNetwork(lan)    // null — вернуть выбор системе (например, если Wi-Fi выключен)
         } catch (e: Exception) {
-            emptyList()
+            // не критично: тогда работаем как раньше, по выбору системы
         }
+    }
+
+    /** Свой адрес в локальной сети и длина маски (24 = 255.255.255.0). */
+    private class Lan(val addr: Inet4Address, val prefix: Int)
+
+    private fun localNets(): List<Lan> = try {
+        NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()
+            .filter { runCatching { it.isUp && !it.isLoopback }.getOrDefault(false) }
+            .sortedByDescending { it.name.startsWith("wlan") || it.name.startsWith("eth") }
+            .flatMap { it.interfaceAddresses }
+            .mapNotNull { ia -> (ia.address as? Inet4Address)?.takeIf { it.isSiteLocalAddress }?.let { Lan(it, ia.networkPrefixLength.toInt()) } }
+    } catch (e: Exception) {
+        emptyList()
+    }
+
+    /** Адреса телефона в локальной сети (для подсказки, если компьютер не нашёлся). */
+    fun ownAddresses(): List<String> = localNets().mapNotNull { it.addr.hostAddress }
+
+    /** Ищет компьютер с PhonePrint в локальной сети (перебор адресов своей подсети на порту 8080). */
+    fun discover(pin: String = ""): Pair<String, JSONObject>? {
+        val own = localNets()
         if (own.isEmpty()) return null
 
-        val hosts = own.flatMap { addr ->
-            val b = addr.address
-            val prefix = "${b[0].toInt() and 255}.${b[1].toInt() and 255}.${b[2].toInt() and 255}"
-            (1..254).map { "$prefix.$it" }.filter { it != addr.hostAddress }
+        // Сначала свои x.x.x.1–254, потом остальная подсеть, если маска шире /24 (но не больше /22 — это 1022 адреса)
+        val hosts = own.flatMap { lan ->
+            val me = lan.addr.address.fold(0) { acc, b -> (acc shl 8) or (b.toInt() and 255) }
+            val mask = (-1 shl (32 - lan.prefix.coerceIn(22, 30)))
+            val net = me and mask
+            val bcast = net or mask.inv()
+            val ownBlock = me and 0xFFFFFF00.toInt()
+            fun ip(v: Int) = "${v ushr 24}.${(v shr 16) and 255}.${(v shr 8) and 255}.${v and 255}"
+            (net + 1 until bcast).filter { it != me }
+                .sortedBy { if ((it and 0xFFFFFF00.toInt()) == ownBlock) 0 else 1 }
+                .map(::ip)
         }.distinct()
 
         val pool = Executors.newFixedThreadPool(48)

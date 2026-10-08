@@ -179,8 +179,8 @@ $History  = New-Object System.Collections.ArrayList
 # IPv4-адрес этого ПК в локальной сети. Перебираем сетевые адаптеры и выбираем лучший: с основным шлюзом,
 # из частного диапазона, физический (не VPN/виртуальный). Раньше брался только адаптер со шлюзом, и на ПК без
 # шлюза/с нестандартной сетью показывался 127.0.0.1.
-function Get-LanIp {
-    $best = $null; $bestScore = -1000
+function Get-LanCandidates {
+    $found = New-Object System.Collections.ArrayList
     try {
         foreach ($nic in [System.Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces()) {
             if ($nic.OperationalStatus -ne 'Up') { continue }
@@ -197,15 +197,65 @@ function Get-LanIp {
                 if ($o1 -eq 10 -or ($o1 -eq 192 -and $o2 -eq 168) -or ($o1 -eq 172 -and $o2 -ge 16 -and $o2 -le 31)) { $score += 50 }
                 if ($nic.NetworkInterfaceType -in 'Wireless80211', 'Ethernet', 'GigabitEthernet') { $score += 20 }
                 if ($label -match 'vEthernet|VirtualBox|VMware|Hyper-V|Hamachi|TAP|VPN|Wintun|WireGuard|Tailscale|ZeroTier|Bluetooth|Docker|WSL|Loopback') { $score -= 150 }
-                if ($score -gt $bestScore) { $best = $ip; $bestScore = $score }
+                [void]$found.Add([pscustomobject]@{ Ip = $ip; Score = $score; Name = $nic.Name; Prefix = $ua.PrefixLength })
             }
         }
     } catch {}
-    if ($best) { return $best }
+    return @($found | Sort-Object Score -Descending)
+}
+
+function Get-LanIp {
+    $all = @(Get-LanCandidates)
+    if ($all.Count) { return $all[0].Ip }
     return '127.0.0.1'
 }
 
+# Остальные адреса ПК (кроме основного) — на случай, если телефон в другой сети/подсети, чем выбранный адаптер
+function Get-OtherLanIps {
+    $main = Get-LanIp
+    return @(Get-LanCandidates | Where-Object { $_.Ip -ne $main } | ForEach-Object Ip)
+}
+
 function Get-AppUrl { "http://$(Get-LanIp):$Port" }
+
+# Окно «Проверка сети»: что видит ПК и что чаще всего мешает телефону его найти
+function Show-NetworkDiagnostics {
+    $nl = [Environment]::NewLine
+    $lines = New-Object System.Collections.ArrayList
+    [void]$lines.Add("Порт: $Port")
+    [void]$lines.Add('')
+    [void]$lines.Add('Адреса этого ПК:')
+    $cands = @(Get-LanCandidates)
+    if (-not $cands.Count) { [void]$lines.Add('  нет рабочего IPv4-подключения') }
+    foreach ($c in $cands) { [void]$lines.Add("  $($c.Ip)/$($c.Prefix)  — $($c.Name)") }
+    [void]$lines.Add('')
+    [void]$lines.Add('Телефон должен быть в той же подсети: первые три числа адреса совпадают')
+    [void]$lines.Add('(например, у ПК 192.168.1.2 — у телефона 192.168.1.x). Адрес телефона:')
+    [void]$lines.Add('Wi-Fi → ваша сеть → «Подробности» (или в приложении при ошибке поиска).')
+    [void]$lines.Add('')
+    try {
+        $rule = @(Get-NetFirewallRule -DisplayName $AppName -ErrorAction Stop | Where-Object Enabled -eq 'True')
+        if ($rule.Count) { [void]$lines.Add('Брандмауэр: правило «PhonePrint» есть.') }
+        else { [void]$lines.Add('Брандмауэр: правило «PhonePrint» ОТКЛЮЧЕНО — запустите setup.cmd.') }
+    } catch {
+        [void]$lines.Add('Брандмауэр: правила «PhonePrint» НЕТ — запустите setup.cmd на этом ПК.')
+    }
+    try {
+        $cat = @(Get-NetConnectionProfile -ErrorAction Stop | ForEach-Object { "$($_.Name): $($_.NetworkCategory)" })
+        if ($cat.Count) { [void]$lines.Add('Тип сети: ' + ($cat -join '; ')) }
+    } catch {}
+    [void]$lines.Add('Если стоит антивирус со своим брандмауэром (Kaspersky, ESET, Dr.Web и т.п.) — разрешите в нём порт TCP ' + $Port + '.')
+    [void]$lines.Add('Если всё верно, а телефон не находит ПК: в роутере выключите «Изоляцию клиентов (AP isolation)»')
+    [void]$lines.Add('и проверьте, что телефон не в гостевой Wi-Fi сети.')
+    $ok = 'нет'
+    try {
+        $tc = New-Object System.Net.Sockets.TcpClient
+        try { $tc.Connect((Get-LanIp), $Port); $ok = 'да' } finally { $tc.Close() }
+    } catch {}
+    [void]$lines.Add('')
+    [void]$lines.Add("Сервер отвечает на $(Get-LanIp):$Port с самого ПК: $ok")
+    [void][System.Windows.Forms.MessageBox]::Show(($lines -join $nl), "$AppName — проверка сети", 'OK', 'Information')
+}
 
 function Get-DefaultPrinter {
     (Get-CimInstance Win32_Printer -Filter 'Default=TRUE' | Select-Object -First 1).Name
@@ -513,6 +563,7 @@ $QrPageTemplate = @'
 Android попросит разрешить установку из браузера — разрешите.</p>
 <p>Без приложения тоже можно: просто откройте в браузере телефона <b>__URL__</b></p>
 <p>Телефон должен быть подключён к той же сети (Wi-Fi роутера), что и этот компьютер.</p>
+__OTHERS__
 <script>
   if (window.QRCode) new QRCode(document.getElementById('qr'), {text:'__URL__/app', width:260, height:260});
   else document.getElementById('qr').textContent = 'QR-код не загрузился (нет интернета) — введите адрес вручную.';
@@ -527,7 +578,9 @@ function Handle-Request($ctx) {
         if ($req.HttpMethod -eq 'GET' -and ($path -eq '/' -or $path -eq '/index.html')) {
             Send-Bytes $ctx 200 'text/html; charset=utf-8' ([IO.File]::ReadAllBytes((Join-Path $Root 'web\index.html')))
         } elseif ($req.HttpMethod -eq 'GET' -and $path -eq '/qr') {
-            $html = $QrPageTemplate.Replace('__URL__', (Get-AppUrl))
+            $others = @(Get-OtherLanIps | ForEach-Object { "<b>http://${_}:$Port</b>" })
+            $othersHtml = if ($others.Count) { '<p>Не открывается? У компьютера есть и другие адреса, попробуйте: ' + ($others -join ', ') + '</p>' } else { '' }
+            $html = $QrPageTemplate.Replace('__URL__', (Get-AppUrl)).Replace('__OTHERS__', $othersHtml)
             Send-Bytes $ctx 200 'text/html; charset=utf-8' ([Text.Encoding]::UTF8.GetBytes($html))
         } elseif ($req.HttpMethod -eq 'GET' -and ($path -eq '/app' -or $path -eq '/app.apk')) {
             $apk = Join-Path $Root 'PhonePrint.apk'
@@ -581,6 +634,7 @@ $miAddr.Enabled = $false
 [void]$menu.Items.Add('-')
 [void]$menu.Items.Add('Установить приложение на телефон (QR-код)', $null, { Start-Process "http://localhost:$Port/qr" })
 [void]$menu.Items.Add('Открыть страницу печати', $null, { Start-Process "http://localhost:$Port/" })
+[void]$menu.Items.Add('Проверка сети (если телефон не находит ПК)', $null, { Show-NetworkDiagnostics })
 [void]$menu.Items.Add('Журнал', $null, { if (Test-Path $LogFile) { Start-Process notepad.exe "`"$LogFile`"" } })
 $miPinSet = $menu.Items.Add('Задать PIN-код…', $null, {
     $pin = Show-PinDialog
