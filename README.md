@@ -241,7 +241,34 @@ HEIC не поддерживается.
 
 ---
 
-## 10. Сборка релиза
+## 10. Сервер на Raspberry Pi / Linux (вместо ПК)
+
+Если принтер подключён к Raspberry Pi (или другому Linux-устройству) с CUPS, сервер можно запустить на нём — ПК включать не нужно.
+Приложение и веб-страница работают без изменений: тот же API (PIN, копии, страницы, двусторонняя печать, выбор принтера).
+
+Что внутри папки `pi/`:
+- `phoneprint_server.py` — сервер на Python (только стандартная библиотека; для фото нужен `python3-pil`);
+- `phoneprint.service` — служба systemd (автозапуск при включении, перезапуск при сбое);
+- `install.sh` — установщик.
+
+**Установка** (Debian / Raspberry Pi OS, принтер уже настроен в CUPS — `lpstat -p` его показывает):
+
+1. Скопировать на Pi содержимое `pi/`, папку `web/` и `PhonePrint.apk` в одну папку (или всю распакованную папку репозитория).
+2. `sudo ./install.sh` — ставит пакеты (в т.ч. LibreOffice для Word/Excel; без него: `sudo ./install.sh --no-office`),
+   кладёт сервер в `/opt/phoneprint`, включает и запускает службу, делает единственный принтер принтером CUPS по умолчанию.
+3. PIN-код (по желанию): `sudo phoneprint-pin set` / `sudo phoneprint-pin clear`.
+
+Адрес вида `http://<IP Pi>:8080`; приложение находит его само. Журнал: `/var/lib/phoneprint/phoneprint.log` и `journalctl -u phoneprint`.
+Обновление сервера: заменить `/opt/phoneprint/phoneprint_server.py` и `sudo systemctl restart phoneprint`.
+
+Как печатается: PDF и фото (фото сначала превращаются в PDF с учётом поворота) — через CUPS (`lp`); Word, Excel, ODT, RTF и **текст** —
+через LibreOffice → PDF → CUPS (текстовый фильтр CUPS теряет кириллицу, поэтому текст идёт через PDF). Двусторонняя печать
+доступна, если в драйвере принтера есть опция Duplex. Если принтеров несколько, основной задаётся командой `sudo lpoptions -d ИМЯ`.
+Пробный запуск без печати: `python3 phoneprint_server.py --port 18080 --dry-run --data-dir /tmp/pp`.
+
+---
+
+## 11. Сборка релиза
 
 `make-release.ps1` (после сборки APK) кладёт в папку `dist`:
 `PhonePrint-<версия>.apk` — отдельный APK для телефона, и `PhonePrint-<версия>-windows.zip` — программа для ПК вместе с установщиком
@@ -249,7 +276,7 @@ Ghostscript (`redist`, скачивается один раз и в git не п�
 
 ---
 
-## 11. Лицензия и публикация
+## 12. Лицензия и публикация
 
 Лицензия — MIT (`LICENSE`). В git не попадают ключ подписи (`*.jks`, `keystore.properties`), `local.properties`,
 журнал и APK (см. `.gitignore`); образцы — `android\keystore.properties.example`, `android\local.properties.example`.

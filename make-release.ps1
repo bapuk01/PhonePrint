@@ -47,5 +47,15 @@ if (Test-Path $zip) { Remove-Item $zip -Force }
 Compress-Archive -Path $stage -DestinationPath $zip -CompressionLevel Optimal
 Copy-Item $apk (Join-Path $dist "PhonePrint-$ver.apk") -Force
 Remove-Item (Join-Path $dist 'stage') -Recurse -Force
+# --- архив для Raspberry Pi / Linux (сервер на Python + установщик, веб-страница и APK) ---
+$piStage = Join-Path $dist 'stage-pi/PhonePrint-pi'
+New-Item -ItemType Directory -Force $piStage | Out-Null
+Copy-Item (Join-Path $root 'pi/*') $piStage
+Copy-Item (Join-Path $root 'web') (Join-Path $piStage 'web') -Recurse
+foreach ($f in 'PhonePrint.apk', 'LICENSE', 'README.md') { Copy-Item (Join-Path $root $f) $piStage }
+$tgz = Join-Path $dist "PhonePrint-$ver-raspberrypi.tar.gz"
+if (Test-Path $tgz) { Remove-Item $tgz -Force }
+tar -czf $tgz -C (Join-Path $dist 'stage-pi') 'PhonePrint-pi'
+Remove-Item (Join-Path $dist 'stage-pi') -Recurse -Force
 
 Get-ChildItem $dist | ForEach-Object { '{0}  {1:N1} МБ' -f $_.Name, ($_.Length / 1MB) }

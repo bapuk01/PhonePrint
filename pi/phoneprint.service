@@ -1,0 +1,17 @@
+[Unit]
+Description=PhonePrint - печать с телефона через CUPS
+After=network-online.target cups.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+Environment=PHONEPRINT_DATA=/var/lib/phoneprint
+ExecStart=/usr/bin/python3 /opt/phoneprint/phoneprint_server.py --port 8080
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
