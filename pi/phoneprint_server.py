@@ -339,6 +339,84 @@ def print_job(path: Path, ext: str, name: str, printer: str, copies: int, pages:
             raise RuntimeError("Формат .{} не поддерживается. Подходят PDF, фото (JPG/PNG), Word, Excel, TXT.".format(ext))
 
 
+# ------------------------------------------------------------------ сканирование (SANE / HPLIP)
+
+SCAN_LOCK = threading.Lock()
+_scanner_cache = [0.0, []]
+SCAN_MODES = {"color": "Color", "gray": "Gray", "bw": "Lineart"}
+
+
+def list_scanners():
+    """Сканеры, которые видит SANE: [{'id': ..., 'name': ...}]. Кэш на 30 секунд."""
+    now = time.time()
+    if now - _scanner_cache[0] < 30:
+        return _scanner_cache[1]
+    rc, out = run(["scanimage", "-L"], timeout=40)
+    found = []
+    for m in re.finditer(r"device `([^']+)' is a (.+)", out):
+        found.append({"id": m.group(1), "name": m.group(2).strip()})
+    _scanner_cache[0], _scanner_cache[1] = now, found
+    return found
+
+
+def _scanimage(cmd, out_file=None, timeout=240):
+    """Запуск scanimage; stdout (картинка) пишется в out_file. Возвращает (код, текст ошибки)."""
+    try:
+        if out_file is not None:
+            with open(out_file, "wb") as f:
+                p = subprocess.run(cmd, stdout=f, stderr=subprocess.PIPE, timeout=timeout)
+        else:
+            p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
+        return p.returncode, p.stderr.decode("utf-8", "replace").strip()
+    except FileNotFoundError:
+        return 127, "не установлен scanimage (sudo apt install sane-utils)"
+    except subprocess.TimeoutExpired:
+        return 124, "сканер не ответил за {} с".format(timeout)
+
+
+def scan_pages(device, dpi, mode, source, workdir: Path):
+    """Сканирует страницы в TIFF-файлы в workdir, возвращает список путей."""
+    # Область A4: по умолчанию драйвер сканирует 22,9 x 38,1 см, и снизу получается белое поле.
+    base = ["scanimage", "-d", device, "--format=tiff", "--resolution", str(dpi), "--mode", SCAN_MODES[mode],
+            "-x", "210", "-y", "297"]
+    if source == "adf":
+        base += ["--source", "ADF", "--batch=" + str(workdir / "p%03d.tiff")]
+        rc, err = _scanimage(base, timeout=600)
+        pages = sorted(workdir.glob("p*.tiff"))
+        # «в автоподатчике закончились листы» — штатное завершение, если хоть одна страница получена
+        if not pages:
+            if "out of documents" in err or not err:
+                raise RuntimeError("В автоподатчике нет документов. Положите лист или выберите «Стекло сканера».")
+            raise RuntimeError("Сканер не вернул страниц: " + err[-200:])
+        return pages
+    out = workdir / "p001.tiff"
+    # Стекло: источник «Auto» (у HPLIP значения Flatbed нет — есть Auto и ADF)
+    rc, err = _scanimage(base, out_file=out)
+    if rc != 0 or not out.exists() or out.stat().st_size == 0:
+        raise RuntimeError("Ошибка сканирования: " + (err[-200:] or "сканер не ответил"))
+    return [out]
+
+
+def build_scan_file(pages, fmt, dpi, workdir: Path):
+    """Собирает результат: JPG для одной страницы, иначе (или если просили PDF) — PDF. Возвращает (путь, mime, расширение)."""
+    try:
+        from PIL import Image
+    except ImportError:
+        raise RuntimeError("Для сканирования нужен пакет python3-pil (sudo apt install python3-pil)")
+    images = []
+    for p in pages:
+        with Image.open(p) as im:
+            im.load()
+            images.append(im.convert("RGB") if im.mode not in ("L", "RGB") else im.copy())
+    if fmt == "jpg" and len(images) == 1:
+        out = workdir / "scan.jpg"
+        images[0].save(out, "JPEG", quality=88, dpi=(dpi, dpi))
+        return out, "image/jpeg", "jpg"
+    out = workdir / "scan.pdf"
+    images[0].save(out, "PDF", save_all=True, append_images=images[1:], resolution=float(dpi))
+    return out, "application/pdf", "pdf"
+
+
 # ------------------------------------------------------------------ HTTP
 
 QR_PAGE = """<!doctype html>
@@ -440,6 +518,7 @@ class Handler(BaseHTTPRequestHandler):
             "duplex": {p: duplex_option(p) is not None for p in printers},
             "status": printer_status(target),
             "queue": queue_length(target),
+            "scanners": list_scanners(),
             "word": bool(SOFFICE),
             "excel": bool(SOFFICE),
             "dryRun": DRY_RUN,
@@ -486,13 +565,52 @@ class Handler(BaseHTTPRequestHandler):
                     total += len(chunk)
         return total
 
+    def do_scan(self):
+        """POST /api/scan?device=&dpi=300&mode=color|gray|bw&format=jpg|pdf&source=flatbed|adf — отдаёт готовый файл."""
+        q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        get = lambda k, d="": q.get(k, [d])[0]
+        mode = get("mode", "color") if get("mode", "color") in SCAN_MODES else "color"
+        fmt = "pdf" if get("format") == "pdf" else "jpg"
+        source = "adf" if get("source") == "adf" else "flatbed"
+        try:
+            dpi = min(max(int(get("dpi", "300")), 75), 600)
+        except ValueError:
+            dpi = 300
+        scanners = list_scanners()
+        device = get("device") if get("device") in [s["id"] for s in scanners] else (scanners[0]["id"] if scanners else "")
+        tmpdir = Path(tempfile.mkdtemp(prefix="pp_scan_"))
+        try:
+            if not device:
+                raise RuntimeError("Сканер не найден. Он подключён и включён? (sudo scanimage -L на устройстве)")
+            if not SCAN_LOCK.acquire(timeout=1):
+                raise RuntimeError("Сканер занят другим сканированием.")
+            try:
+                t0 = time.time()
+                pages = scan_pages(device, dpi, mode, source, tmpdir)
+                out, mime, ext = build_scan_file(pages, fmt, dpi, tmpdir)
+                body = out.read_bytes()
+            finally:
+                SCAN_LOCK.release()
+            name = "scan_{}.{}".format(time.strftime("%Y%m%d_%H%M%S"), ext)
+            log("SCAN {} -> {} стр., {} dpi, {}, {:.0f} с, {} КБ".format(
+                device, len(pages), dpi, mode, time.time() - t0, len(body) // 1024))
+            self.send_bytes(200, mime, body, {"X-File-Name": urllib.parse.quote(name), "X-Pages": str(len(pages))})
+        except Exception as e:             # noqa: BLE001
+            msg = str(e) or e.__class__.__name__
+            log("ERR  скан: " + msg)
+            self.send_json({"ok": False, "message": msg}, 500)
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
     def do_POST(self):
         path = urllib.parse.urlparse(self.path).path.lower()
-        if path != "/api/print":
+        if path not in ("/api/print", "/api/scan"):
             return self.send_json({"error": "Not found"}, 404)
         auth = auth_status(self)
         if auth != 200:
             return self.send_auth_error(auth)
+        if path == "/api/scan":
+            return self.do_scan()
 
         q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
         name = urllib.parse.unquote(self.headers.get("X-File-Name", "")) or "document"

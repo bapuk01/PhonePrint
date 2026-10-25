@@ -46,7 +46,7 @@
   .bar i{display:block;height:100%;background:var(--accent);width:0}
   .x{border:0;background:none;color:var(--muted);font-size:22px;width:36px;height:36px;cursor:pointer}
   .row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0}
-  .row[hidden]{display:none}
+  .row[hidden], #scanLink[hidden]{display:none}
   .row + .row{border-top:1px solid var(--line)}
   .row > span, .row > label{flex:none}
   input[type=text], input[type=password], select, textarea{font:inherit;color:var(--text);background:var(--bg);
@@ -133,6 +133,29 @@
 
   <button id="print" class="btn big primary" type="button" disabled>Печать</button>
   <p class="hint">PDF, фото, Word, Excel, TXT</p>
+
+  <section id="scanBox" class="card" hidden>
+    <h2 style="margin:0 0 6px">Сканирование</h2>
+    <div class="row">
+      <label for="scanDpi">Разрешение</label>
+      <select id="scanDpi"><option value="150">150 dpi</option><option value="300" selected>300 dpi</option><option value="600">600 dpi</option></select>
+    </div>
+    <div class="row">
+      <label for="scanMode">Цвет</label>
+      <select id="scanMode"><option value="color">Цветной</option><option value="gray">Оттенки серого</option><option value="bw">Чёрно-белый</option></select>
+    </div>
+    <div class="row">
+      <label for="scanFmt">Формат</label>
+      <select id="scanFmt"><option value="jpg">JPG (фото)</option><option value="pdf">PDF</option></select>
+    </div>
+    <div class="row">
+      <label for="scanSrc">Откуда</label>
+      <select id="scanSrc"><option value="flatbed">Стекло сканера</option><option value="adf">Автоподатчик</option></select>
+    </div>
+    <button id="scanGo" class="btn big" type="button">Сканировать</button>
+    <p id="scanMsg" class="hint"></p>
+    <a id="scanLink" class="btn" hidden>Скачать скан</a>
+  </section>
 
   <section id="historyBox" hidden>
     <h2>Недавние</h2>
@@ -229,6 +252,25 @@ function updateDuplex() {
 }
 $('#duplex').checked = store('duplex') === '1';
 $('#duplex').onchange = () => store('duplex', $('#duplex').checked ? '1' : '0');
+let scanners = [];
+$('#scanGo').onclick = async () => {
+  const q = new URLSearchParams({ device: scanners[0] ? scanners[0].id : '', dpi: $('#scanDpi').value, mode: $('#scanMode').value,
+    format: $('#scanFmt').value, source: $('#scanSrc').value });
+  $('#scanGo').disabled = true; $('#scanLink').hidden = true;
+  $('#scanMsg').textContent = 'Сканирую… положите документ на стекло и подождите (до минуты)';
+  try {
+    const r = await fetch('/api/scan?' + q, { method: 'POST', headers: authHeaders() });
+    if (!r.ok) { let m = 'Ошибка сканирования (' + r.status + ')'; try { m = (await r.json()).message || m; } catch (e) {} throw new Error(m); }
+    const blob = await r.blob();
+    const name = decodeURIComponent(r.headers.get('X-File-Name') || 'scan');
+    const a = $('#scanLink');
+    if (a.href) URL.revokeObjectURL(a.href);
+    a.href = URL.createObjectURL(blob); a.download = name; a.textContent = 'Скачать скан: ' + name; a.hidden = false;
+    $('#scanMsg').textContent = 'Готово (' + Math.round(blob.size / 1024) + ' КБ)';
+  } catch (e) { $('#scanMsg').textContent = e.message; }
+  $('#scanGo').disabled = false;
+};
+
 $('#printer').onchange = () => { store('printerChoice', $('#printer').value); updateDuplex(); };
 
 function upload(it) {
@@ -282,6 +324,8 @@ async function loadInfo() {
     sel.innerHTML = `<option value="">По умолчанию на ПК (${esc(info.printer)})</option>` +
       info.printers.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join('');
     sel.value = info.printers.includes(prev) ? prev : '';
+    scanners = info.scanners || [];
+    $('#scanBox').hidden = !scanners.length;
     duplexSupport = info.duplex || {};
     defaultPrinter = info.printer;
     updateDuplex();

@@ -23,7 +23,7 @@ done
 echo "==> Пакеты"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y --no-install-recommends python3 python3-pil cups-client fonts-liberation fonts-dejavu-core
+apt-get install -y --no-install-recommends python3 python3-pil cups-client sane-utils fonts-liberation fonts-dejavu-core
 if [ "$OFFICE" = 1 ]; then
   echo "==> LibreOffice (для Word/Excel) — это несколько минут"
   apt-get install -y --no-install-recommends libreoffice-writer-nogui libreoffice-calc-nogui
@@ -35,6 +35,9 @@ install -m 755 "$SRC/phoneprint_server.py" "$APP/phoneprint_server.py"
 cp -r "$WEB/." "$APP/web/"
 [ -n "$APK" ] && install -m 644 "$APK" "$APP/PhonePrint.apk" || echo "(PhonePrint.apk не найден — раздача /app не будет работать)"
 install -d -m 755 -o "$SVC_USER" "$DATA"
+# Доступ к USB-принтерам и сканерам для службы
+usermod -aG lp "$SVC_USER" 2>/dev/null || true
+getent group scanner >/dev/null && usermod -aG scanner "$SVC_USER" || true
 
 cat > /usr/local/bin/phoneprint-pin <<'WRAP'
 #!/bin/sh

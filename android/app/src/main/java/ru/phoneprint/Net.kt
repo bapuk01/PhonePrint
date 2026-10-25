@@ -135,6 +135,33 @@ object Net {
         }
     }
 
+    class ScanResult(val ok: Boolean, val message: String, val fileName: String = "", val pages: Int = 0)
+
+    /** Сканирует на сервере и сохраняет готовый файл (JPG или PDF) в out. Долгий запрос — вызывать не из главного потока. */
+    fun scan(base: String, pin: String, device: String, dpi: Int, mode: String, fmt: String, source: String, out: java.io.File): ScanResult {
+        val c = URL("$base/api/scan?device=${enc(device)}&dpi=$dpi&mode=$mode&format=$fmt&source=$source").openConnection() as HttpURLConnection
+        try {
+            c.requestMethod = "POST"
+            c.doOutput = true
+            c.setFixedLengthStreamingMode(0)
+            c.connectTimeout = 5_000
+            c.readTimeout = 12 * 60 * 1000           // сканирование многостраничного документа бывает долгим
+            if (pin.isNotEmpty()) c.setRequestProperty("X-Pin", enc(pin))
+            c.outputStream.close()
+            val code = c.responseCode
+            if (code == 200) {
+                c.inputStream.use { i -> out.outputStream().use { o -> i.copyTo(o) } }
+                val name = java.net.URLDecoder.decode(c.getHeaderField("X-File-Name") ?: "scan", "UTF-8")
+                return ScanResult(true, "", name, c.getHeaderField("X-Pages")?.toIntOrNull() ?: 1)
+            }
+            val body = (if (code < 400) c.inputStream else c.errorStream)?.bufferedReader()?.use { it.readText() }.orEmpty()
+            val msg = runCatching { JSONObject(body).optString("message") }.getOrNull().orEmpty()
+            return ScanResult(false, msg.ifEmpty { "Ошибка сканирования ($code)" })
+        } finally {
+            c.disconnect()
+        }
+    }
+
     /** Отправляет файл на печать. Возвращает (успех, сообщение сервера). */
     fun upload(
         cr: ContentResolver,

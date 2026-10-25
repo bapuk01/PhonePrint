@@ -3,9 +3,11 @@ package ru.phoneprint
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.ActivityNotFoundException
+import android.content.ContentValues
 import android.content.Intent
 import android.content.SharedPreferences
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -72,6 +74,8 @@ class MainActivity : Activity() {
 
     private var pin = ""                        // PIN-код, заданный на компьютере (пусто = не задан)
     private var pinDialog: AlertDialog? = null
+    private var scanners: List<Pair<String, String>> = emptyList()   // id, название сканера на сервере
+    private var scanning = false
     private var duplexSupport: Map<String, Boolean> = emptyMap()   // имя принтера на ПК -> умеет двустороннюю печать
     private var defaultPrinterName = ""
     private var server: String? = null          // http://192.168.1.50:8080
@@ -89,6 +93,7 @@ class MainActivity : Activity() {
     private lateinit var copiesView: TextView
     private lateinit var pages: EditText
     private lateinit var printer: Spinner
+    private lateinit var btnScan: Button
     private lateinit var duplexBox: View
     private lateinit var duplex: CheckBox
     private lateinit var btnPrint: Button
@@ -108,6 +113,8 @@ class MainActivity : Activity() {
         copiesView = findViewById(R.id.copies)
         pages = findViewById(R.id.pages)
         printer = findViewById(R.id.printer)
+        btnScan = findViewById(R.id.btnScan)
+        btnScan.setOnClickListener { showScanDialog() }
         duplexBox = findViewById(R.id.duplexBox)
         duplex = findViewById(R.id.duplex)
         duplex.isChecked = prefs.getBoolean(KEY_DUPLEX, false)
@@ -352,6 +359,12 @@ class MainActivity : Activity() {
         }
         printer.setSelection(printerValues.indexOf(current).coerceAtLeast(0))
 
+        // Сканер (если у сервера он есть)
+        scanners = info.optJSONArray("scanners")?.let { a ->
+            List(a.length()) { a.getJSONObject(it).let { o -> o.optString("id") to o.optString("name") } }
+        }.orEmpty()
+        btnScan.visibility = if (scanners.isNotEmpty()) View.VISIBLE else View.GONE
+
         // Двусторонняя печать: галочка видна только у принтеров, чей драйвер её поддерживает
         defaultPrinterName = target
         duplexSupport = info.optJSONObject("duplex")?.let { d -> d.keys().asSequence().associateWith { d.optBoolean(it) } }.orEmpty()
@@ -414,6 +427,125 @@ class MainActivity : Activity() {
 
     private fun updateDuplexVisibility() {
         duplexBox.visibility = if (duplexAvailable()) View.VISIBLE else View.GONE
+    }
+
+    // ---------- сканирование ----------
+
+    private fun labeledSpinner(box: LinearLayout, title: String, items: List<String>, selected: Int): Spinner {
+        box.addView(TextView(this).apply {
+            text = title
+            setTextColor(getColor(R.color.muted))
+            textSize = 13f
+            setPadding(0, 14, 0, 0)
+        })
+        return Spinner(this).also {
+            it.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, items).apply {
+                setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+            }
+            it.setSelection(selected)
+            box.addView(it)
+        }
+    }
+
+    private fun showScanDialog() {
+        if (scanning) return
+        if (server == null) { toast("Компьютер ещё не найден"); return }
+        val dpis = listOf(150, 300, 600)
+        val modes = listOf("color", "gray", "bw")
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val sScanner = if (scanners.size > 1) labeledSpinner(box, "Сканер", scanners.map { it.second }, 0) else null
+        val sDpi = labeledSpinner(box, "Разрешение", dpis.map { "$it dpi" + if (it == 300) " (обычное)" else "" }, prefs.getInt("scanDpi", 1))
+        val sMode = labeledSpinner(box, "Цвет", listOf("Цветной", "Оттенки серого", "Чёрно-белый"), prefs.getInt("scanMode", 0))
+        val sFmt = labeledSpinner(box, "Формат", listOf("JPG (фото)", "PDF"), prefs.getInt("scanFmt", 0))
+        val sSrc = labeledSpinner(box, "Откуда", listOf("Стекло сканера", "Автоподатчик (несколько листов → PDF)"), prefs.getInt("scanSrc", 0))
+        AlertDialog.Builder(this)
+            .setTitle("Сканирование")
+            .setView(padded(box))
+            .setPositiveButton("Сканировать") { _, _ ->
+                prefs.edit().putInt("scanDpi", sDpi.selectedItemPosition).putInt("scanMode", sMode.selectedItemPosition)
+                    .putInt("scanFmt", sFmt.selectedItemPosition).putInt("scanSrc", sSrc.selectedItemPosition).apply()
+                startScan(
+                    scanners[sScanner?.selectedItemPosition ?: 0].first, dpis[sDpi.selectedItemPosition],
+                    modes[sMode.selectedItemPosition], if (sFmt.selectedItemPosition == 1) "pdf" else "jpg",
+                    if (sSrc.selectedItemPosition == 1) "adf" else "flatbed",
+                )
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    private fun startScan(device: String, dpi: Int, mode: String, fmt: String, source: String) {
+        val base = server ?: return
+        scanning = true
+        btnScan.isEnabled = false
+        val progress = AlertDialog.Builder(this)
+            .setTitle("Сканирование…")
+            .setMessage("Положите документ на стекло (или в автоподатчик) и подождите — это может занять до минуты.")
+            .setCancelable(false)
+            .show()
+        val dir = File(cacheDir, "scans").apply { mkdirs(); listFiles()?.forEach { it.delete() } }
+        val out = File(dir, "scan.tmp")
+        worker.execute {
+            val r = try {
+                Net.scan(base, pin, device, dpi, mode, fmt, source, out)
+            } catch (e: Exception) {
+                Net.ScanResult(false, friendly(e))
+            }
+            val file = if (r.ok) File(dir, r.fileName).also { out.renameTo(it) } else null
+            main.post {
+                scanning = false
+                btnScan.isEnabled = true
+                progress.dismiss()
+                if (file != null) showScanResult(file, r.pages) else AlertDialog.Builder(this)
+                    .setTitle("Не удалось отсканировать").setMessage(r.message).setPositiveButton("OK", null).show()
+            }
+        }
+    }
+
+    private fun showScanResult(file: File, pages: Int) {
+        val uri = FileProvider.getUriForFile(this, "ru.phoneprint.files", file)
+        val mime = if (file.name.endsWith(".pdf")) "application/pdf" else "image/jpeg"
+        AlertDialog.Builder(this)
+            .setTitle("Скан готов")
+            .setMessage(file.name + "\n" + (file.length() / 1024) + " КБ" + if (pages > 1) ", страниц: $pages" else "")
+            .setPositiveButton("Отправить / сохранить") { _, _ ->
+                val send = Intent(Intent.ACTION_SEND).apply {
+                    type = mime
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                startActivity(Intent.createChooser(send, "Отправить скан"))
+            }
+            .setNeutralButton("В «Загрузки»") { _, _ -> saveToDownloads(file, mime) }
+            .setNegativeButton("Открыть") { _, _ ->
+                try {
+                    startActivity(Intent(Intent.ACTION_VIEW).apply {
+                        setDataAndType(uri, mime)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    })
+                } catch (e: ActivityNotFoundException) {
+                    toast("Нет приложения для просмотра")
+                }
+            }
+            .show()
+    }
+
+    private fun saveToDownloads(file: File, mime: String) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            toast("На этой версии Android сохраните через «Отправить / сохранить»")
+            return
+        }
+        try {
+            val values = ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, file.name)
+                put(MediaStore.Downloads.MIME_TYPE, mime)
+            }
+            val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: throw java.io.IOException()
+            contentResolver.openOutputStream(uri)?.use { o -> file.inputStream().use { it.copyTo(o) } }
+            toast("Сохранено в «Загрузки»: " + file.name)
+        } catch (e: Exception) {
+            toast("Не удалось сохранить файл")
+        }
     }
 
     private fun showSettings() {
